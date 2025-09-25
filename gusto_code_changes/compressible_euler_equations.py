@@ -2,8 +2,7 @@
 
 from firedrake import (
     sin, pi, inner, dx, div, cross, FunctionSpace, FacetNormal, jump, avg, dS_v,
-    conditional, SpatialCoordinate, split, Constant, as_vector, ln, as_vector,
-    grad
+    conditional, SpatialCoordinate, split, Constant, as_vector, ln, grad
 )
 from firedrake.fml import subject, replace_subject, all_terms
 from gusto.core.labels import (
@@ -198,6 +197,9 @@ class CompressibleEulerEquations(PrognosticEquationSet):
             print(u)
             print(u_advect)
             print(u_w)
+            print(dx)
+            print(u[1].dx(1))
+            print(grad(u[1]))
         else:
             u_advect = u
 
@@ -277,24 +279,29 @@ class CompressibleEulerEquations(PrognosticEquationSet):
         theta_v = theta / (Constant(1.0) + tracer_mr_total)
         
         if PML_options is not None:
-            pressure_gradient_form = None
-            # Modify the normal term for PML streach
-            pressure_gradient_form = pressure_gradient(subject(prognostic(
-                cp*(-div(theta_v*w)*exner*dx_qp
-                    + jump(theta_v*w, n)*avg(exner)*dS_v_qp), 'u'), self.X))
+            # Modify the normal term for PML stretch
             #pressure_gradient_form = pressure_gradient(subject(prognostic(
-            #    cp*(- ((theta_v*w[0]).dx(0) + (1/self.gamma_z)*(theta_v*w[1]).dx(1))*exner*dx_qp
-            #        + jump(theta_v*w, n)*avg(exner)*dS_v_qp), 'u'), self.X))
+            #    cp*(-div(theta_v*w)*exner*dx_qp
+             #       + jump(theta_v*w, n)*avg(exner)*dS_v_qp), 'u'), self.X))
+            pressure_gradient_form = pressure_gradient(subject(prognostic(
+                cp*(- ((theta_v*w[0]).dx(0) + (1/self.gamma_z)*(theta_v*w[1]).dx(1))*exner*dx_qp
+                    + jump(theta_v*w, n)*avg(exner)*dS_v_qp), 'u'), self.X))
             # Add a pressure gradient for the PML variable of q_w = vertical component of q_u
             #pressure_gradient_form -= pressure_gradient(subject(prognostic(
             #    cp*(- ((1/self.gamma_z)*(theta_v*q_u_test[1]).dx(1))*exner*dx_qp
             #        + jump(theta_v*q_u_test_vert, n)*avg(exner)*dS_v_qp), 'q_u'), self.X))
             #pressure_gradient_form -= pressure_gradient(subject(prognostic(
-            #    cp*(- ((theta_v*q_u_test[1]).dx(1))*exner*dx_qp
+            #   cp*(- ((theta_v*q_u_test[1]).dx(1))*exner*dx_qp
+            #        + jump(theta_v*q_u_test, n)*avg(exner)*dS_v_qp), 'q_u'), self.X))
+            #pressure_gradient_form -= pressure_gradient(subject(prognostic(
+            #    cp*(- div(theta_v*q_u_test_vert)*exner*dx_qp
             #        + jump(theta_v*q_u_test_vert, n)*avg(exner)*dS_v_qp), 'q_u'), self.X))
+            #pressure_gradient_form -= pressure_gradient(subject(prognostic(
+            #    cp*(- ((theta_v*q_u_test[1]).dx(1))*exner*dx_qp), 'q_u'), self.X))
+
+            # Perhaps need to take 
             pressure_gradient_form -= pressure_gradient(subject(prognostic(
-                cp*(- div(theta_v*q_u_test_vert)*exner*dx_qp
-                    + jump(theta_v*q_u_test_vert, n)*avg(exner)*dS_v_qp), 'q_u'), self.X))
+                cp*(- ((theta_v*q_u_test[1]).dx(1))*exner*dx_qp), 'q_u'), self.X))
 
         else:
             pressure_gradient_form = pressure_gradient(subject(prognostic(
