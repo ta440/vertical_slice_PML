@@ -2,8 +2,7 @@
 
 from firedrake import (
     sin, pi, inner, dx, div, cross, FunctionSpace, FacetNormal, jump, avg, dS_v,
-    conditional, SpatialCoordinate, split, Constant, as_vector, ln, as_vector,
-    grad
+    conditional, SpatialCoordinate, split, Constant, as_vector, ln, grad
 )
 from firedrake.fml import subject, replace_subject, all_terms
 from gusto.core.labels import (
@@ -97,6 +96,7 @@ class CompressibleEulerEquations(PrognosticEquationSet):
             active_tracers = []
 
         if PML_options is not None:
+            # Define PML variables in the same space as the original ones
             field_names.extend(['q_u', 'q_rho', 'q_theta'])
             space_names.update({'q_u': 'HDiv', 'q_rho': 'L2', 'q_theta': 'theta'})
 
@@ -129,7 +129,7 @@ class CompressibleEulerEquations(PrognosticEquationSet):
         dS_v_qp = dS_v(degree=(domain.max_quad_degree))
 
         # -------------------------------------------------------------------- #
-        # PML options, if using
+        # PML options, if using.
         # -------------------------------------------------------------------- #
         if PML_options is not None:
             # Extract the key PML parameters
@@ -149,6 +149,7 @@ class CompressibleEulerEquations(PrognosticEquationSet):
             z = x[len(x)-1]
 
             print(len(x))
+            print(H_PML)
             print(Constant(sigma0))
 
             #import sys; sys.exit()
@@ -160,7 +161,9 @@ class CompressibleEulerEquations(PrognosticEquationSet):
             W_DG = FunctionSpace(domain.mesh, "DG", 2)
             self.sigma = self.prescribed_fields("PML", W_DG).interpolate(sigma_expr)
 
-            self.gamma_z = self.prescribed_fields("gamma_z", W_DG).interpolate(Constant(1.0) + gamma0*self.sigma)
+            self.gamma_z = self.prescribed_fields("gamma_z", W_DG).interpolate(Constant(1.0))# + gamma0*self.sigma)
+
+            # Also need to define equivalents for the RT space.
 
         # -------------------------------------------------------------------- #
         # Time Derivative Terms
@@ -171,15 +174,32 @@ class CompressibleEulerEquations(PrognosticEquationSet):
         # Transport Terms
         # -------------------------------------------------------------------- #
 
-        # If using a PML, scale the vertical advecting velocity:
         if PML_options is not None:
+            # Decompose the velocity
+            u_vert = domain.k*inner(u, domain.k)
+            u_horiz = u - u_vert
+            u_vert_scaled = (Constant(1.0)/self.gamma_z)*u_vert
+
+            # This is the test function
+            w_vert = domain.k*inner(w, domain.k)
+            w_horiz = w - w_vert
+
+            # PML u test function
+            q_u_test_vert = domain.k*inner(q_u_test, domain.k)
+            #q_u_test_horiz = q_u_test - q_u_test_vert
+
+            # For the PML, scale the vertical advecting velocity:
             scale_vect = as_vector([Constant(1.0), self.gamma_z])
-            #u_bar = u*scale_vect
-            u_advect = as_vector([u[0], u[1]/self.gamma_z])
-            u_w = as_vector([Constant(0.0), u[1]/self.gamma_z])
+            #u_advect = as_vector([u_horiz, u_vert_scaled])
+            u_advect = u
+            u_w = as_vector([Constant(0.0), u[1]])
+            #u_w = u_vert
             print(u)
             print(u_advect)
             print(u_w)
+            print(dx)
+            print(u[1].dx(1))
+            print(grad(u[1]))
         else:
             u_advect = u
 
@@ -259,14 +279,29 @@ class CompressibleEulerEquations(PrognosticEquationSet):
         theta_v = theta / (Constant(1.0) + tracer_mr_total)
         
         if PML_options is not None:
-            # Modify the normal term
+            # Modify the normal term for PML stretch
+            #pressure_gradient_form = pressure_gradient(subject(prognostic(
+            #    cp*(-div(theta_v*w)*exner*dx_qp
+             #       + jump(theta_v*w, n)*avg(exner)*dS_v_qp), 'u'), self.X))
             pressure_gradient_form = pressure_gradient(subject(prognostic(
                 cp*(- ((theta_v*w[0]).dx(0) + (1/self.gamma_z)*(theta_v*w[1]).dx(1))*exner*dx_qp
                     + jump(theta_v*w, n)*avg(exner)*dS_v_qp), 'u'), self.X))
-            # Add a pressure gradient for the PML variable
-            pressure_gradient_form += pressure_gradient(subject(prognostic(
-                cp*(- (1/self.gamma_z)*(theta_v*q_u_test[1]).dx(1)*exner*dx_qp
-                    + jump(theta_v*q_u_test, n)*avg(exner)*dS_v_qp), 'q_u'), self.X))
+            # Add a pressure gradient for the PML variable of q_w = vertical component of q_u
+            #pressure_gradient_form -= pressure_gradient(subject(prognostic(
+            #    cp*(- ((1/self.gamma_z)*(theta_v*q_u_test[1]).dx(1))*exner*dx_qp
+            #        + jump(theta_v*q_u_test_vert, n)*avg(exner)*dS_v_qp), 'q_u'), self.X))
+            #pressure_gradient_form -= pressure_gradient(subject(prognostic(
+            #   cp*(- ((theta_v*q_u_test[1]).dx(1))*exner*dx_qp
+            #        + jump(theta_v*q_u_test, n)*avg(exner)*dS_v_qp), 'q_u'), self.X))
+            #pressure_gradient_form -= pressure_gradient(subject(prognostic(
+            #    cp*(- div(theta_v*q_u_test_vert)*exner*dx_qp
+            #        + jump(theta_v*q_u_test_vert, n)*avg(exner)*dS_v_qp), 'q_u'), self.X))
+            #pressure_gradient_form -= pressure_gradient(subject(prognostic(
+            #    cp*(- ((theta_v*q_u_test[1]).dx(1))*exner*dx_qp), 'q_u'), self.X))
+
+            # Perhaps need to take 
+            pressure_gradient_form -= pressure_gradient(subject(prognostic(
+                cp*(- ((theta_v*q_u_test[1]).dx(1))*exner*dx_qp), 'q_u'), self.X))
 
         else:
             pressure_gradient_form = pressure_gradient(subject(prognostic(
