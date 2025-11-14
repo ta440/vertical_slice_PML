@@ -18,7 +18,8 @@ from gusto.equations.common_forms import (
 )
 from gusto.equations.prognostic_equations import PrognosticEquationSet
 
-__all__ = ["BoussinesqEquations", "LinearBoussinesqEquations", "MelvinLinearBoussinesqEquations"]
+__all__ = ["BoussinesqEquations", "LinearBoussinesqEquations", "LinearAcousticBuoyancyEquations",
+           "AcousticEquations"]
 
 
 class BoussinesqEquations(PrognosticEquationSet):
@@ -420,7 +421,7 @@ class LinearBoussinesqEquations(BoussinesqEquations):
         self.linearise_equation_set()
 
 
-class MelvinLinearBoussinesqEquations(PrognosticEquationSet):
+class LinearAcousticBuoyancyEquations(PrognosticEquationSet):
     """
     Class for the Boussinesq equations, which evolve the velocity
     'u', the pressure 'p' and the buoyancy 'b'. Can be compressible or
@@ -439,7 +440,6 @@ class MelvinLinearBoussinesqEquations(PrognosticEquationSet):
                  PML_options=None,
                  space_names=None,
                  linearisation_map=all_terms,
-                 u_transport_option="vector_invariant_form",
                  no_normal_flow_bc_ids=None,
                  active_tracers=None):
         """
@@ -456,10 +456,6 @@ class MelvinLinearBoussinesqEquations(PrognosticEquationSet):
                 terms in the equation set to linearise. If None is specified
                 then no terms are linearised. Defaults to the FML `all_terms`
                 function.
-            u_transport_option (str, optional): specifies the transport term
-                used for the velocity equation. Supported options are:
-                'vector_invariant_form', 'vector_advection_form' and
-                'circulation_form'.
                 Defaults to 'vector_invariant_form'.
             no_normal_flow_bc_ids (list, optional): a list of IDs of domain
                 boundaries at which no normal flow will be enforced. Defaults to
@@ -494,6 +490,7 @@ class MelvinLinearBoussinesqEquations(PrognosticEquationSet):
                          active_tracers=active_tracers)
 
         self.parameters = parameters
+        self.PML_options = PML_options
         self.compressible = True
 
         if PML_options is not None:
@@ -533,14 +530,18 @@ class MelvinLinearBoussinesqEquations(PrognosticEquationSet):
 
             #import sys; sys.exit()
 
-            sigma_expr = conditional(z <= H_PML,
-                                     0.0,
-                                     sigma0*((z-H_PML)/delta)**3)
+            #sigma_expr = conditional(z <= H_PML,
+            #                         0.0,
+            #                         sigma0*((z-H_PML)/delta)**3)
+            
+            sigma_expr = Constant(1.0)
 
             W_DG = FunctionSpace(domain.mesh, "DG", 2)
             self.sigma = self.prescribed_fields("PML", W_DG).interpolate(sigma_expr)
 
-            self.gamma_z = self.prescribed_fields("gamma_z", W_DG).interpolate(Constant(1.0))# + gamma0*self.sigma)
+            self.gamma_z = self.prescribed_fields("gamma_z", W_DG).interpolate(Constant(1.0))
+            #self.gamma_z = self.prescribed_fields("gamma_z", W_DG).interpolate(Constant(1.0) + gamma0*z)
+            #self.gamma_z = self.prescribed_fields("gamma_z", W_DG).interpolate(Constant(1.0) + gamma0*self.sigma)
 
             # Also need to define equivalents for the RT space.
 
@@ -621,6 +622,9 @@ class MelvinLinearBoussinesqEquations(PrognosticEquationSet):
             #residual -= pressure_gradient(subject(prognostic(
             #    q_u_test[1]*(p.dx(1))*dx, 'q_u'), self.X))
 
+            # Optionally, add buoyancy to q_u equation:
+            residual += subject(prognostic(b*inner(q_u_test, domain.k)*dx, 'u'), self.X)
+
             # Divergence term
             residual -= divergence(
                 subject(prognostic(cs**2 * (q_p_test * div(u_w) * dx), 'q_p'), self.X))
@@ -632,5 +636,174 @@ class MelvinLinearBoussinesqEquations(PrognosticEquationSet):
             residual += subject(prognostic((self.sigma+alpha)*inner(q_u_test, q_u)*dx, 'q_u'), self.X) 
             residual += subject(prognostic(q_p_test*(self.sigma+alpha)*q_p*dx, 'q_p'), self.X)
             residual += subject(prognostic(q_b_test*(self.sigma+alpha)*q_b*dx, 'q_b'), self.X)
+
+        self.residual = residual
+
+class AcousticEquations(PrognosticEquationSet):
+    """
+    The simplest equations that I can think to test.
+    Just the acoustic equations!
+    ∂u/∂t + ∇p = 0,                                                     \n
+    ∂p/∂t + cs**2(∇.u) = 0,                                                    \n
+
+    """
+
+    def __init__(self, domain, parameters,
+                 PML_options=None,
+                 space_names=None,
+                 linearisation_map=all_terms,
+                 no_normal_flow_bc_ids=None,
+                 active_tracers=None):
+        """
+        Args:
+            domain (:class:`Domain`): the model's domain object, containing the
+                mesh and the compatible function spaces.
+            parameters (:class:`Configuration`, optional): an object containing
+                the model's physical parameters.
+            space_names (dict, optional): a dictionary of strings for names of
+                the function spaces to use for the spatial discretisation. The
+                keys are the names of the prognostic variables. Defaults to None
+                in which case the spaces are taken from the de Rham complex.
+            linearisation_map (func, optional): a function specifying which
+                terms in the equation set to linearise. If None is specified
+                then no terms are linearised. Defaults to the FML `all_terms`
+                function.
+                Defaults to 'vector_invariant_form'.
+            no_normal_flow_bc_ids (list, optional): a list of IDs of domain
+                boundaries at which no normal flow will be enforced. Defaults to
+                None.
+            active_tracers (list, optional): a list of `ActiveTracer` objects
+                that encode the metadata for any active tracers to be included
+                in the equations.. Defaults to None.
+
+        Raises:
+            NotImplementedError: active tracers are not implemented.
+        """
+
+        field_names = ['u', 'p']
+
+        if space_names is None:
+            space_names = {'u': 'HDiv', 'p': 'L2'}
+
+        if PML_options is not None:
+            # Define PML variables in the same space as the original ones
+            field_names.extend(['q_u', 'q_p'])
+            space_names.update({'q_u': 'HDiv', 'q_p': 'L2'})
+
+        if active_tracers is not None:
+            raise NotImplementedError('Tracers not implemented for Boussinesq equations')
+
+        if active_tracers is None:
+            active_tracers = []
+
+        super().__init__(field_names, domain, space_names,
+                         linearisation_map=linearisation_map,
+                         no_normal_flow_bc_ids=no_normal_flow_bc_ids,
+                         active_tracers=active_tracers)
+
+        self.parameters = parameters
+        self.PML_options = PML_options
+        self.compressible = True
+
+        if PML_options is not None:
+            tau_u, tau_p, chi_u, chi_p = self.tests[0:4]
+            u, p, q_u, q_p = split(self.X)[0:4]
+            u_trial, p_trial, q_u_trial, q_p_trial = split(self.trials)[0:4]
+            u_bar, p_bar, q_u_bar, q_p_bar = split(self.X_ref)[0:4]
+        else:
+            tau_u, tau_p = self.tests[0:2]
+            u, p = split(self.X)
+            u_trial, p_trial = split(self.trials)[0:2]
+            u_bar, p_bar = split(self.X_ref)[0:2]
+
+        # -------------------------------------------------------------------- #
+        # PML options, if using.
+        # -------------------------------------------------------------------- #
+        if PML_options is not None:
+            # Extract the key PML parameters
+            c_max = PML_options.c_max
+            delta_frac = PML_options.delta_frac
+            tol = PML_options.tol
+            gamma0 = PML_options.gamma0
+            H = PML_options.H
+            alpha_fact = PML_options.alpha_fact
+
+            delta = delta_frac*H
+            H_PML = H - delta
+            sigma0 = (4*c_max/(2*delta))*ln(1/tol)
+            alpha = Constant(alpha_fact*sigma0)
+
+            x = SpatialCoordinate(domain.mesh)
+            z = x[len(x)-1]
+
+            print(len(x))
+            print(H_PML)
+            print(Constant(sigma0))
+
+            #import sys; sys.exit()
+
+            #sigma_expr = conditional(z <= H_PML,
+            #                         0.0,
+            #                         sigma0*((z-H_PML)/delta)**3)
+            
+            sigma_expr = Constant(1.0)
+
+            W_DG = FunctionSpace(domain.mesh, "DG", 2)
+            self.sigma = self.prescribed_fields("PML", W_DG).interpolate(sigma_expr)
+
+            self.gamma_z = self.prescribed_fields("gamma_z", W_DG).interpolate(Constant(1.0))
+            #self.gamma_z = self.prescribed_fields("gamma_z", W_DG).interpolate(Constant(1.0) + gamma0*z)
+            #self.gamma_z = self.prescribed_fields("gamma_z", W_DG).interpolate(Constant(1.0) + gamma0*self.sigma)
+
+            # Also need to define equivalents for the RT space.
+
+        # -------------------------------------------------------------------- #
+        # Time Derivative Terms
+        # -------------------------------------------------------------------- #
+        mass_form = self.generate_mass_terms()
+
+        # -------------------------------------------------------------------- #
+        # PML modified advection
+        # -------------------------------------------------------------------- #
+        if PML_options is not None:
+
+            # Vertical components of the test function
+            u_test_vert = domain.k*inner(tau_u, domain.k)
+            chi_u_vert = domain.k*inner(chi_u, domain.k)
+
+
+        # -------------------------------------------------------------------- #
+        # Pressure Gradient Term
+        # -------------------------------------------------------------------- #
+        pressure_gradient_form = pressure_gradient(subject(prognostic(
+            -div(tau_u)*p*dx, 'u'), self.X))
+
+        # -------------------------------------------------------------------- #
+        # Divergence Term
+        # -------------------------------------------------------------------- #
+        cs = parameters.cs
+        divergence_form = divergence(subject(prognostic(cs**2 * (tau_p * div(u) * dx), 'p'), self.X))
+
+        residual = (mass_form + divergence_form + pressure_gradient_form)
+
+        # -------------------------------------------------------------------- #
+        # PML terms
+        # -------------------------------------------------------------------- #
+
+        if PML_options is not None:
+
+            # Vertical pressure gradient term
+            residual -= subject(prognostic(
+            -div(chi_u_vert)*p*dx, 'q_u'), self.X)
+
+            # Divergence term
+            residual -= divergence(
+                subject(prognostic(cs**2 * (chi_p * div(u_vert) * dx), 'q_p'), self.X))
+            
+            # The PML damping terms
+            residual -= subject(prognostic(self.sigma*inner(tau_u, q_u)*dx, 'u'), self.X)
+            residual -= subject(prognostic(self.sigma*tau_p*q_p*dx, 'p'), self.X)
+            residual += subject(prognostic((self.sigma+alpha)*inner(chi_u, q_u)*dx, 'q_u'), self.X) 
+            residual += subject(prognostic((self.sigma+alpha)*chi_p*q_p*dx, 'q_p'), self.X)
 
         self.residual = residual
