@@ -1,8 +1,9 @@
 '''
-A script to solve the comppressible Euler equations with the addition
-of topography. This is part of experiments to determine if I 
-can make a simple system that contains
-orographically-driven gravity waves.
+Solving a system that only
+contains acoustic waves.
+
+This script is a reference one, with a much higher model top.
+
 '''
 
 from firedrake import (
@@ -17,31 +18,27 @@ from gusto import (
     CompressibleEulerEquations, SubcyclingOptions, RungeKuttaFormulation,
     Timestepper, RK4, XComponent,ForwardEuler, BoussinesqEquations, BoussinesqParameters,
     BoussinesqSolver, boussinesq_hydrostatic_balance, LinearAcousticBuoyancyEquations,
-    AcousticEquations, PMLParameters
+    AcousticEquations
 )
 
+savename = 'acoustic_only_ref'
+
 ncolumns=50
-nlayers=50
+nlayers=100
 dt=0.1
 tmax=50.0
 dumpfreq=10
 
 domain_width = 20.e3    # width of domain in x direction, in m
-domain_height = 20.e3    # height of model top, in m
+domain_height = 40.e3    # height of model top, in m
 p_pert = 50             # Maximum amplitude of pressure perturbation
 d = 1.e3                 # Gaussian half-width for the pressure perturbation
 xc = 0.5*domain_width   # x location of the perturbation
-zc = 0.5*domain_height  # z location of the perturbation
+zc = 10.e3  # z location of the perturbation
 max_iterations = 20      # maximum number of hydrostatic balance iterations
 tolerance = 1e-8         # tolerance for hydrostatic balance iteration
 cs = 350                 # Speed of sound, m/s
 
-# PML parameters:
-A = 2                    # PML strength, default is A=2
-gamma0 = 1.0             # PML stretching
-
-#savename = 'PML_acoustic_only'
-savename = f'PML_acoustic_only_gamma0_{gamma0}'
 
 # ------------------------------------------------------------------------ #
 # Our settings for this set up
@@ -63,23 +60,8 @@ domain = Domain(mesh, dt, "CG", element_order)
 # Equation
 parameters = BoussinesqParameters(mesh, cs=cs)
 
-# PML using defined parameters
-PML_pars = PMLParameters(mesh, H=domain_height, delta_frac = 0.1, c_max=cs, gamma0=gamma0, A=A)
-
-# Default parameters, thicker PML
-#PML_pars = PMLParameters(mesh, H=domain_height, delta_frac = 0.2, c_max=cs, gamma0=0.0)
-
-# Stricter tol
-#PML_pars = PMLParameters(mesh, H=domain_height, delta_frac = 0.2, c_max=cs, gamma0=0.0, tol=1e-4)
-
-# Stronger damping
-#PML_pars = PMLParameters(mesh, H=domain_height, delta_frac = 0.2, c_max=cs, gamma0=0.0, A=6)
-
-# Stronger alpha
-#PML_pars = PMLParameters(mesh, H=domain_height, delta_frac = 0.2, c_max=cs, gamma0=0.0)
-
 eqns = AcousticEquations(
-    domain=domain, parameters=parameters, PML_options=PML_pars
+    domain=domain, parameters=parameters
 )
 
 # I/O
@@ -91,7 +73,7 @@ output = OutputParameters(
     )
 
 
-diagnostic_fields = [XComponent('u'), ZComponent('u'),XComponent('q_u'), ZComponent('q_u')]
+diagnostic_fields = [XComponent('u'), ZComponent('u')]
 
 io = IO(domain, output, diagnostic_fields=diagnostic_fields)
 
@@ -118,10 +100,10 @@ Vp = p0.function_space()
 x, z = SpatialCoordinate(mesh)
 
 # Construct the Gaussian perturbation on the pressure field
-p_expr = conditional((x > 0.3*domain_width),
-                     conditional(x < 0.7*domain_width,
-                                 conditional(z > 0.3*domain_height,
-                                             conditional(z < 0.7*domain_height,
+p_expr = conditional((x > 6.e3),
+                     conditional(x < 14.e3,
+                                 conditional(z > 6.e3,
+                                             conditional(z < 14.e3,
                                                          p_pert*exp(-((x-xc)**2 + (z-zc)**2)/d**2),
                                                          0), 0), 0), 0)
 

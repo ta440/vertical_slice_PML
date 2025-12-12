@@ -25,10 +25,12 @@ from tomplot import (
 # Give the time to plot at:
 t_idx = 50
 
+results_dir = 'acoustic_only_ref'
 #results_dir = 'acoustic_test'
 #results_dir = 'PML_acoustic_default'
 #results_dir = 'PML_acoustic_with_gamma_z'
-results_dir = 'PML_acoustic_A6'
+#results_dir = 'PML_acoustic_A6'
+#results_dir = 'PML_acoustic_test2'
 
 extra_name = ''
 
