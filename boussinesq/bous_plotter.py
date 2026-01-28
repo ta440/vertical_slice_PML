@@ -23,11 +23,19 @@ from tomplot import (
 #########################################
 
 # Give the time to plot at:
-t_idx = 78
+t_idx = 0
 
+# Acoustic wave results:
+results_dir = 'bous_mount_acoustic'
+#results_dir = 'bous_mount_acoustic_ref'
+#results_dir = 'bous_mount_acoustic_ref_test'
 #results_dir = 'bous_mount_acoustic_wave'
 #results_dir = 'bous_mount_acoustic_wave_hydro_balance'
-results_dir = 'PML_bous_mount_gravity_wave_trapz_dt_10s_TT_10000'
+
+# Gravity wave results:
+#results_dir = 'PML_bous_mount_gravity_wave_trapz_dt_10s_TT_10000_gamma0_0'
+#results_dir = 'bous_mount_gravity_wave_trapz_10s_TT_10000s_vec_adv'
+#results_dir = 'bous_mount_gravity_wave_ref'
 
 plot_PML_vars = False
 
@@ -70,12 +78,14 @@ for i, (ax, field_name, field_title) in \
     if contours[0] == contours[-1]:
         contours = np.arange(0,1,0.1)
 
+    print(contours)
+
     print('\n')
     print(field_name)
     #print(contours)
     #print(np.where(contours==0.0)[0])
 
-    if (contours[0] < 0) and (len(np.where(contours==0.0)[0]) > 0):
+    if (contours[0] < 0) and (contours[-1]> 0):
         cmap, lines = tomplot_cmap(contours, colour_scheme)#, remove_contour = 0.0)
     else:
         cmap, lines = tomplot_cmap(contours, colour_scheme)

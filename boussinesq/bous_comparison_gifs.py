@@ -24,8 +24,8 @@ from tomplot import (
 #########################################
 
 vanilla_results_dir = 'bous_mount_acoustic_wave_hydro_balance'
-PML_results_dir = 'PML_bous_mount_acoustic_wave'
-extra_name = 'bous_acoustic_'
+PML_results_dir = 'PML_bous_mount_acoustic_gamma0_0.0'
+extra_name = 'bous_acoustic_gamma0_0.0'
 
 field_name = 'u_z'
 #field_name = 'q_u_z'

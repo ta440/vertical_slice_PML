@@ -1,8 +1,12 @@
 '''
-A script to solve the comppressible Euler equations with the addition
-of topography. This is part of experiments to determine if I 
-can make a simple system that contains
-orographically-driven gravity waves.
+Solving the Boussinesq equations in the presence
+of a Gaussian mountain.
+There are two confiugrations to examine:
+1) A short timescale for acoustic waves.
+2) A longer timescale for orographic gravity waves.
+
+This script applies no damping at the model top.
+
 '''
 
 from firedrake import (
@@ -19,35 +23,48 @@ from gusto import (
     BoussinesqSolver, boussinesq_hydrostatic_balance
 )
 
-savename = 'bous_mount_gravity_wave_trapz_dt_10s_TT_10000'
-#savename = 'bous_mount_acoustic_wave_hydro_balance'
-#savename = 'bous_mount_steady_test'
+variant = 'acoustic'
+# variant = 'gravity_wave'
 
-ncolumns=100
-nlayers=50
-dt=10
-tmax=10000.0
-dumpfreq=10
+domain_width = 100.e3    # width of domain in x direction, in m
+domain_height = 20.e3    # height of model top, in m
 
-domain_width = 100.e3   # width of domain in x direction, in m
-domain_height = 20.e3   # height of model top, in m
+# Set dx = dx = 500 m
+ncolumns=200
+nlayers=40
+
+# Time parameters. Create 100 outputs
+# For the acoustic wave:
+if variant == 'acoustic':
+    # For the acoustic wave:
+    dt = 0.1
+    tmax = 100.
+    dumpfreq=10
+elif variant == 'gravity_wave':
+    # For the orographic gravity wave:
+    dt=10
+    tmax=10000.0
+    dumpfreq=10
+
+# Mountain parameters
 a = 10.e3                # scale width of mountain profile, in m
 hm = 1000.               # height of mountain, in m
-Tsurf = 300.             # temperature of surface, in K
+
+# Other parameters
 initial_wind = 10.0      # initial horizontal wind, in m/s
-sponge_depth = 10000.0   # depth of sponge layer, in m
 g = 9.810616             # acceleration due to gravity, in m/s^2
-max_iterations = 20      # maximum number of hydrostatic balance iterations
 tolerance = 1e-8         # tolerance for hydrostatic balance iteration
 cs = 350                 # Speed of sound, m/s
+p_base = 1e5                # Reference pressure of 100 hPa
 
+savename = f'bous_mount_{variant}'
 
 # ------------------------------------------------------------------------ #
 # Our settings for this set up
 # ------------------------------------------------------------------------ #
 
-spinup_steps = 5  # Not necessary but helps balance initial conditions
-alpha = 0.51      # Necessary to absorb grid scale waves
+#spinup_steps = 5  # Not necessary but helps balance initial conditions
+#alpha = 0.51      # Necessary to absorb grid scale waves
 element_order = 1
 u_eqn_type = 'vector_advection_form'
 
@@ -79,7 +96,7 @@ parameters = BoussinesqParameters(mesh, cs=cs)
 
 # Try both with and without the sponge
 eqns = BoussinesqEquations(
-    domain, parameters
+    domain, parameters, u_transport_option=u_eqn_type
 )
 
 # I/O
@@ -97,37 +114,29 @@ io = IO(domain, output, diagnostic_fields=diagnostic_fields)
 
 # Transport schemes
 b_opts = SUPGOptions()
-transported_fields = [
-    TrapeziumRule(domain, "u"),
-    SSPRK3(domain, "p"),
-    SSPRK3(domain, "b", options=b_opts)
-]
+#transported_fields = [
+#    TrapeziumRule(domain, "u"),
+#    SSPRK3(domain, "p"),
+#    SSPRK3(domain, "b", options=b_opts)
+#]
 transport_methods = [
     DGUpwind(eqns, "u"),
     DGUpwind(eqns, "p"),
     DGUpwind(eqns, "b", ibp=b_opts.ibp)
 ]
 
-# Linear solver
-linear_solver = BoussinesqSolver(eqns)
-
-# Time stepper
-#stepper = SemiImplicitQuasiNewton(
-#    eqns, io, transported_fields, transport_methods,
-#    linear_solver=linear_solver
-#)
-
-# If resolving the acoustic waves, run for a short time,
-# use an explicit timestepper and small dt
-#stepper = Timestepper(
-#    eqns, RK4(domain), io, transport_methods, physics_parametrisations=None
-#)
-
-# If resolving the gravity waves, try an implicit method.
-# Move to TR-BDF2?
-stepper = Timestepper(
-    eqns, TrapeziumRule(domain), io, transport_methods, physics_parametrisations=None
-)
+# Choose timestepper depending on simulation time
+if variant == 'acoustic':
+    # For the acoustic waves, run for a short time,
+    # use an explicit timestepper and small dt
+    stepper = Timestepper(
+        eqns, RK4(domain), io, transport_methods, physics_parametrisations=None
+    )
+elif variant == 'gravity_wave':
+    # If resolving the gravity waves, use an implicit method, theta=0.5.
+    stepper = Timestepper(
+        eqns, TrapeziumRule(domain), io, transport_methods, physics_parametrisations=None
+    )
 
 
 # ------------------------------------------------------------------------ #
@@ -143,37 +152,26 @@ Vu = u0.function_space()
 Vb = b0.function_space()
 Vp = p0.function_space()
 
-# Thermodynamic constants required for setting initial conditions
-# and reference profiles
 N = parameters.N
-
-# N^2 = (g/theta)dtheta/dz => dtheta/dz = theta N^2g => theta=theta_0exp(N^2gz)
 x, z = SpatialCoordinate(mesh)
 
-# first setup the background buoyancy profile
-# z.grad(bref) = N**2
+# First, setup the background buoyancy profile
+# db/dz = N**2
 bref = z*(N**2)
-# interpolate the expression to the function
 b_b = Function(Vb).interpolate(bref)
+b0.assign(b_b)
 
-# interpolate the expression to the function
-b0.interpolate(b_b)
-
-p_b = Function(Vp)
-boussinesq_hydrostatic_balance(eqns, b_b, p_b)
+# Define pressure ourselves to be in hydrostatic balance
+pref = (z**2)*(N**2)/2 - 20000
+p_b = Function(Vp).interpolate(pref)
 p0.assign(p_b)
 
-# Try give zero initial conditions to p, b
-#b0.assign(Constant(0.0))
-#p0.assign(Constant(0.0))
-#b_b = Function(Vb).interpolate(b0)
-#p_b = Function(Vp).interpolate(p0)
+# Derive pressure by hydrostatic pressure
+#boussinesq_hydrostatic_balance(eqns, b_b, p_b)
+#p0.assign(p_b)
 
 # Zonal wind field
 u_b = Function(Vu).project(as_vector([initial_wind, 0.0]))
-
-# For the steady test:
-#u_b = Function(Vu).project(as_vector([Constant(0.0), 0.0]))
 
 u0.assign(u_b)
 
