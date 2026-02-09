@@ -1,8 +1,8 @@
 '''
-A script to solve the comppressible Euler equations with the addition
-of topography. This is part of experiments to determine if I 
-can make a simple system that contains
-orographically-driven gravity waves.
+A script to solve the linear acoustic buoyancy equations.
+A pressure perturbation is applied to excite a radially
+propagating acoustic wave.
+Here, a sponge layer is used.
 '''
 
 from firedrake import (
@@ -17,8 +17,10 @@ from gusto import (
     CompressibleEulerEquations, SubcyclingOptions, RungeKuttaFormulation,
     Timestepper, RK4, XComponent,ForwardEuler, BoussinesqEquations, BoussinesqParameters,
     BoussinesqSolver, boussinesq_hydrostatic_balance, LinearAcousticBuoyancyEquations,
-    PMLParameters, KineticEnergy, VerticalKineticEnergy
+    KineticEnergy, VerticalKineticEnergy
 )
+
+#######################################################
 
 domain_width = 100.e3    # width of domain in x direction, in m
 domain_height = 20.e3    # height of model top, in m
@@ -40,11 +42,12 @@ zc = 0.5*domain_height  # z location of the perturbation
 
 # Other parameters
 cs = 350                 # Speed of sound, m/s
+sponge_depth = 2.e3     # 2000m, so the same width as the PML
+mu_dt = 0.25               # strength of sponge layer, no units
 
-# PML parameters
-gamma0 = 1.0
+########################################################
 
-savename = f'PML_acoustic_buoyancy_runA_gamma0_{gamma0}'
+savename = f'acoustic_buoyancy_sponge_runA_mudt_{mu_dt}'
 
 # ------------------------------------------------------------------------ #
 # Our settings for this set up
@@ -53,6 +56,7 @@ savename = f'PML_acoustic_buoyancy_runA_gamma0_{gamma0}'
 spinup_steps = 5  # Not necessary but helps balance initial conditions
 alpha = 0.51      # Necessary to absorb grid scale waves
 element_order = 1
+u_eqn_type = 'vector_advection_form'
 
 base_mesh = PeriodicIntervalMesh(ncolumns, domain_width)
 mesh = ExtrudedMesh(
@@ -64,10 +68,12 @@ domain = Domain(mesh, dt, "CG", element_order)
 
 # Equation
 parameters = BoussinesqParameters(mesh, cs=cs)
-PML_pars = PMLParameters(mesh, H=domain_height, gamma0=gamma0)
+sponge = SpongeLayerParameters(
+        mesh, H=domain_height, z_level=domain_height-sponge_depth, mubar=mu_dt/dt
+    )
 
 eqns = LinearAcousticBuoyancyEquations(
-    domain=domain, parameters=parameters, PML_options=PML_pars
+    domain=domain, parameters=parameters, sponge_options=sponge
 )
 
 # I/O
@@ -78,33 +84,38 @@ output = OutputParameters(
         dump_nc=True,
     )
 
-
-diagnostic_fields = [Perturbation('b'), ZComponent('u'), XComponent('u'), ZComponent('q_u'), XComponent('q_u'), 
-                     KineticEnergy(), VerticalKineticEnergy()]
+diagnostic_fields = [Perturbation('b'), ZComponent('u'), XComponent('u'), KineticEnergy(), VerticalKineticEnergy()]
 
 io = IO(domain, output, diagnostic_fields=diagnostic_fields)
+
+# Transport schemes
+b_opts = SUPGOptions()
+transported_fields = [
+    TrapeziumRule(domain, "u"),
+    SSPRK3(domain, "p"),
+    SSPRK3(domain, "b", options=b_opts)
+]
 
 stepper = Timestepper(
     eqns, RK4(domain), io
 )
 
+
 # ------------------------------------------------------------------------ #
-# Initial conditions
+# Initial conditions. A Gaussian perturbation on p.
 # ------------------------------------------------------------------------ #
 
 u0 = stepper.fields("u")
 p0 = stepper.fields("p")
 b0 = stepper.fields("b")
-q_u0 = stepper.fields("q_u")
-q_p0 = stepper.fields("q_p")
 
 # spaces
 Vb = b0.function_space()
 Vp = p0.function_space()
 
-x, z = SpatialCoordinate(mesh)
+# Define a Gaussian perturbation
 
-# Define a Gaussian pertubration
+x, z = SpatialCoordinate(mesh)
 expr = conditional((x > 0.3*domain_width),
                      conditional(x < 0.7*domain_width,
                                  conditional(z > 0.3*domain_height,
@@ -112,24 +123,13 @@ expr = conditional((x > 0.3*domain_width),
                                                          pert*exp(-((x-xc)**2 + (z-zc)**2)/d**2),
                                                          0), 0), 0), 0)
 
-# Apply the perturbation to the buoyancy
-#b_b = Function(Vb).interpolate(b_expr)
-#b0.interpolate(b_b)
-
-#p_b = Function(Vp)
-#boussinesq_hydrostatic_balance(eqns, b_b, p_b)
-#p0.assign(p_b)
-
 p_b = Function(Vp).interpolate(expr)
 b0.assign(Constant(0.0))
 p0.assign(p_b)
 b_b = Function(Vb).interpolate(b0)
 
+# No initial wind.
 u0.project(as_vector([Constant(0.0), Constant(0.0)]))
-
-# PML variables all set to zero
-q_u0.project(as_vector([Constant(0.0), Constant(0.0)]))
-q_p0.assign(Constant(0.0))
 
 # set the background buoyancy
 stepper.set_reference_profiles([('p', p_b), ('b', b_b)])
