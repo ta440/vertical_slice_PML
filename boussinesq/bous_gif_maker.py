@@ -23,9 +23,15 @@ from tomplot import (
 
 #########################################
 
-#results_dir = 'bous_mount_acoustic_wave_hydro_balance'
+#results_dir = 'bous_mount_acoustic_ref'
+#results_dir = 'bous_mount_acoustic'
 #results_dir = 'PML_bous_mount_acoustic_wave'
-results_dir = 'PML_bous_mount_gravity_wave_trapz_dt_10s_TT_10000'
+results_dir = 'PML_bous_mount_acoustic_gamma0_0.1'
+
+#results_dir = 'bous_mount_gravity_wave_RK4_0.25s_TT_5000'
+#results_dir = 'bous_mount_gravity_wave_trapz_10s_TT_10000s_vec_adv'
+#results_dir = 'bous_mount_sponge_gravity_wave_trapz_dt_10s_TT_10000_mudt_0.5'
+#results_dir = 'PML_bous_mount_gravity_wave_trapz_dt_10s_TT_10000_gamma0_0'
 extra_name = ''
 
 field_name = 'u_z'
@@ -50,7 +56,7 @@ contour_method = 'contour'  # Need to use this method to show mountains!
 #np.linspace(-w_max, w_max, 23)
 
 # List of times to have on the video:
-t_range = np.arange(0,78,1)
+t_range = np.arange(0,100,1)
 
 individual_plots = []
 

@@ -1,12 +1,8 @@
 '''
-Solving the Boussinesq equations in the presence
-of a Gaussian mountain.
-There are two confiugrations to examine:
-1) A short timescale for acoustic waves.
-2) A longer timescale for orographic gravity waves.
-
-This script applies no damping at the model top.
-
+A script to solve the comppressible Euler equations with the addition
+of topography. This is part of experiments to determine if I 
+can make a simple system that contains
+orographically-driven gravity waves.
 '''
 
 from firedrake import (
@@ -23,9 +19,10 @@ from gusto import (
     BoussinesqSolver, boussinesq_hydrostatic_balance, KineticEnergy, VerticalKineticEnergy
 )
 
+####################################################
+
 #variant = 'acoustic'
 variant = 'gravity_wave'
-#variant = 'gravity_wave_SIQN'
 
 domain_width = 100.e3    # width of domain in x direction, in m
 domain_height = 20.e3    # height of model top, in m
@@ -46,29 +43,29 @@ elif variant == 'gravity_wave':
     dt=10
     tmax=10000.0
     dumpfreq=10
-elif variant == 'gravity_wave_SIQN':
-    # Or try a larger time step
-    dt=50
-    tmax=10000.0
-    dumpfreq=10
 
 # Mountain parameters
 a = 10.e3                # scale width of mountain profile, in m
 hm = 1000.               # height of mountain, in m
 
 # Other parameters
+Tsurf = 300.             # temperature of surface, in K
 initial_wind = 10.0      # initial horizontal wind, in m/s
 g = 9.810616             # acceleration due to gravity, in m/s^2
-tolerance = 1e-8         # tolerance for hydrostatic balance iteration
 cs = 350                 # Speed of sound, m/s
-p_base = 1e5                # Reference pressure of 100 hPa
 
-savename = f'bous_mount_{variant}'
+# For the sponge
+sponge_depth = 2.e3     # Same depth as the PML, 10% of model height = 2 km
+mu_dt = 0.25            # Strength of the damping
+
+savename = f'bous_mount_sponge_{variant}_mudt_{mu_dt}'
 
 # ------------------------------------------------------------------------ #
 # Our settings for this set up
 # ------------------------------------------------------------------------ #
 
+spinup_steps = 5  # Not necessary but helps balance initial conditions
+alpha = 0.51      # Necessary to absorb grid scale waves
 element_order = 1
 u_eqn_type = 'vector_advection_form'
 
@@ -97,10 +94,13 @@ domain = Domain(mesh, dt, "CG", element_order)
 
 # Equation
 parameters = BoussinesqParameters(mesh, cs=cs)
+sponge = SpongeLayerParameters(
+        mesh, H=domain_height, z_level=domain_height-sponge_depth, mubar=mu_dt/dt
+    )
 
 # Try both with and without the sponge
 eqns = BoussinesqEquations(
-    domain, parameters, u_transport_option=u_eqn_type
+    domain, parameters, sponge_options=sponge, u_transport_option=u_eqn_type
 )
 
 # I/O
@@ -118,6 +118,7 @@ io = IO(domain, output, diagnostic_fields=diagnostic_fields)
 
 # Transport schemes
 b_opts = SUPGOptions()
+
 transport_methods = [
     DGUpwind(eqns, "u"),
     DGUpwind(eqns, "p"),
@@ -137,32 +138,6 @@ elif variant == 'gravity_wave':
         eqns, TrapeziumRule(domain), io, transport_methods, physics_parametrisations=None
     )
 
-elif variant == 'gravity_wave_SIQN':
-    # Or, try SIQN
-    subcycling_opts = SubcyclingOptions(subcycle_by_courant=0.25)
-    theta_opts = SUPGOptions()
-    transported_fields = [
-        TrapeziumRule(domain, "u", subcycling_options=subcycling_opts),
-        SSPRK3(
-            domain, "p",
-            subcycling_options=subcycling_opts
-        ),
-        SSPRK3(
-            domain, "b", options=theta_opts,
-            subcycling_options=subcycling_opts
-        )
-    ]
-
-    spinup_steps = 5  # Not necessary but helps balance initial conditions
-    alpha = 0.51      # Necessary to absorb grid scale waves
-
-    linear_solver = BoussinesqSolver(eqns)
-
-    stepper = SemiImplicitQuasiNewton(
-        eqns, io, transported_fields, transport_methods,
-        linear_solver=linear_solver, alpha=alpha, spinup_steps=spinup_steps
-    )
-
 
 # ------------------------------------------------------------------------ #
 # Initial conditions
@@ -177,7 +152,11 @@ Vu = u0.function_space()
 Vb = b0.function_space()
 Vp = p0.function_space()
 
+# Thermodynamic constants required for setting initial conditions
+# and reference profiles
 N = parameters.N
+
+# N^2 = (g/theta)dtheta/dz => dtheta/dz = theta N^2g => theta=theta_0exp(N^2gz)
 x, z = SpatialCoordinate(mesh)
 
 # First, setup the background buoyancy profile
@@ -191,12 +170,11 @@ pref = (z**2)*(N**2)/2 - 20000
 p_b = Function(Vp).interpolate(pref)
 p0.assign(p_b)
 
-# Derive pressure by hydrostatic pressure
-#boussinesq_hydrostatic_balance(eqns, b_b, p_b)
-#p0.assign(p_b)
-
 # Zonal wind field
 u_b = Function(Vu).project(as_vector([initial_wind, 0.0]))
+
+# For the steady test:
+#u_b = Function(Vu).project(as_vector([Constant(0.0), 0.0]))
 
 u0.assign(u_b)
 

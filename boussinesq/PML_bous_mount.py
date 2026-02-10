@@ -21,13 +21,15 @@ from gusto import (
     Perturbation, SUPGOptions, TrapeziumRule, MaxKernel, MinKernel,
     CompressibleEulerEquations, SubcyclingOptions, RungeKuttaFormulation,
     Timestepper, RK4, XComponent,ForwardEuler, BoussinesqEquations, BoussinesqParameters,
-    BoussinesqSolver, boussinesq_hydrostatic_balance, PMLParameters, BackwardEuler
+    BoussinesqSolver, boussinesq_hydrostatic_balance, PMLParameters, BackwardEuler,
+    KineticEnergy, VerticalKineticEnergy
 )
 
 ##################################################################
 
-variant = 'acoustic'
-# variant = 'gravity_wave'
+#variant = 'acoustic'
+variant = 'gravity_wave'
+#variant = 'gravity_wave_SIQN'
 
 domain_width = 100.e3    # width of domain in x direction, in m
 domain_height = 20.e3    # height of model top, in m
@@ -40,12 +42,17 @@ nlayers=40
 # For the acoustic wave:
 if variant == 'acoustic':
     # For the acoustic wave:
-    dt = 0.1
-    tmax = 100.
-    dumpfreq=10
+    dt = 0.25
+    tmax = 150.
+    dumpfreq=4
 elif variant == 'gravity_wave':
     # For the orographic gravity wave:
     dt=10
+    tmax=10000.0
+    dumpfreq=10
+elif variant == 'gravity_wave_SIQN':
+    # Or try a larger time step
+    dt=50
     tmax=10000.0
     dumpfreq=10
 
@@ -62,8 +69,8 @@ tolerance = 1e-8         # tolerance for hydrostatic balance iteration
 cs = 350                 # Speed of sound, m/s
 
 # PML parameters:
-#gamma0 = 0.0               # Try with no stretching
-gamma0 = 0.5              # PML stretching factor
+gamma0 = 0.0               # Try with no stretching
+#gamma0 = 0.2           # PML stretching factor
 
 savename = f'PML_bous_mount_{variant}_gamma0_{gamma0}'
 
@@ -103,9 +110,12 @@ domain = Domain(mesh, dt, "CG", element_order)
 parameters = BoussinesqParameters(mesh, cs=cs)
 
 # Modify parameters as necessary
-PML_pars = PMLParameters(mesh, H=domain_height, gamma0=0)
+PML_pars = PMLParameters(mesh, H=domain_height, gamma0=gamma0)
 
 # Try both with and without the sponge
+base_eqns = eqns = BoussinesqEquations(
+    domain, parameters, PML_options=None, u_transport_option=u_eqn_type
+)
 eqns = BoussinesqEquations(
     domain, parameters, PML_options=PML_pars, u_transport_option=u_eqn_type
 )
@@ -118,18 +128,18 @@ output = OutputParameters(
         dump_nc=True,
     )
 
-
-diagnostic_fields = [Perturbation('b'), ZComponent('u'), XComponent('u'), ZComponent('q_u'), XComponent('q_u')]
+diagnostic_fields = [Perturbation('b'), ZComponent('u'), XComponent('u'), ZComponent('q_u'), XComponent('q_u'),
+                     KineticEnergy(), VerticalKineticEnergy()]
 
 io = IO(domain, output, diagnostic_fields=diagnostic_fields)
 
 # Transport schemes
 b_opts = SUPGOptions()
-transported_fields = [
-    TrapeziumRule(domain, "u"),
-    SSPRK3(domain, "p"),
-    SSPRK3(domain, "b", options=b_opts)
-]
+#transported_fields = [
+#    TrapeziumRule(domain, "u"),
+#    SSPRK3(domain, "p"),
+#    SSPRK3(domain, "b", options=b_opts)
+#]
 
 transport_methods = [
     DGUpwind(eqns, "u"),
@@ -159,6 +169,31 @@ elif variant == 'gravity_wave':
     # If resolving the gravity waves, use an implicit method, theta=0.5.
     stepper = Timestepper(
         eqns, TrapeziumRule(domain), io, transport_methods, physics_parametrisations=None
+    )
+elif variant == 'gravity_wave_SIQN':
+    # Or, try SIQN
+    subcycling_opts = SubcyclingOptions(subcycle_by_courant=0.25)
+    theta_opts = SUPGOptions()
+    transported_fields = [
+        TrapeziumRule(domain, "u", subcycling_options=subcycling_opts),
+        SSPRK3(
+            domain, "p",
+            subcycling_options=subcycling_opts
+        ),
+        SSPRK3(
+            domain, "b", options=theta_opts,
+            subcycling_options=subcycling_opts
+        )
+    ]
+
+    spinup_steps = 5  # Not necessary but helps balance initial conditions
+    alpha = 0.51      # Necessary to absorb grid scale waves
+
+    linear_solver = BoussinesqSolver(base_eqns)
+
+    stepper = SemiImplicitQuasiNewton(
+        eqns, io, transported_fields, transport_methods,
+        linear_solver=linear_solver, alpha=alpha, spinup_steps=spinup_steps
     )
 
 
