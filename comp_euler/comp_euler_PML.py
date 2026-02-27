@@ -7,7 +7,7 @@ There are two confiugrations to examine:
 1) A short timescale for acoustic waves.
 2) A longer timescale for orographic gravity waves.
 
-This script applies no damping at the model top.
+This script uses the PML.
 
 '''
 
@@ -23,7 +23,8 @@ from gusto import (
     compressible_hydrostatic_balance, SpongeLayerParameters, Exner, ZComponent,
     Perturbation, SUPGOptions, TrapeziumRule, MaxKernel, MinKernel,
     CompressibleEulerEquations, SubcyclingOptions, RungeKuttaFormulation,
-    Timestepper, RK4, XComponent,ForwardEuler,KineticEnergy, VerticalKineticEnergy
+    Timestepper, RK4, XComponent,ForwardEuler, PMLParameters, 
+    KineticEnergy, VerticalKineticEnergy
 )
 
 variant = 'acoustic'
@@ -57,11 +58,12 @@ hm = 1000.               # height of mountain, in m
 initial_wind = 10.0      # initial horizontal wind, in m/s
 cs = 350                 # Speed of sound, m/s
 Tsurf = 300.             # temperature of surface, in K
-exner_surf = 1.0         # maximum value of Exner pressure at surface
-max_iterations = 20      # maximum number of hydrostatic balance iterations
-tolerance = 1e-8         # tolerance for hydrostatic balance iteration
 
-savename = f'euler_no_damp_analytic_{variant}'
+# PML parameters:
+gamma0 = 0.0               # Try with no stretching
+#gamma0 = 0.1           # PML stretching factor
+
+savename = f'PML_euler_{variant}_gamma0_{gamma0}'
 
 # ------------------------------------------------------------------------ #
 # Our settings for this set up
@@ -97,9 +99,10 @@ domain = Domain(mesh, dt, "CG", element_order)
 
 # Equation
 parameters = CompressibleParameters(mesh, T_0=Tsurf)
+PML_pars = PMLParameters(mesh, H=domain_height, gamma0=gamma0)
 
 eqns = CompressibleEulerEquations(
-    domain, parameters, sponge_options=None, u_transport_option=u_eqn_type
+    domain, parameters, sponge_options=None, PML_options=PML_pars, u_transport_option=u_eqn_type
 )
 
 # I/O
@@ -112,7 +115,8 @@ output = OutputParameters(
 
 diagnostic_fields = [
     Exner(parameters), XComponent('u'), ZComponent('u'), Perturbation('theta'),
-    Perturbation('rho'), KineticEnergy(), VerticalKineticEnergy()
+    Perturbation('rho'), XComponent('q_u'), ZComponent('q_u'),
+    KineticEnergy(), VerticalKineticEnergy()
 ]
 
 io = IO(domain, output, diagnostic_fields=diagnostic_fields)
@@ -120,18 +124,8 @@ io = IO(domain, output, diagnostic_fields=diagnostic_fields)
 # Transport schemes
 subcycling_opts = SubcyclingOptions(subcycle_by_courant=0.25)
 theta_opts = SUPGOptions()
-transported_fields = [
-    TrapeziumRule(domain, "u", subcycling_options=subcycling_opts),
-    SSPRK3(
-        domain, "rho", rk_formulation=RungeKuttaFormulation.predictor,
-        subcycling_options=subcycling_opts
-    ),
-    SSPRK3(
-        domain, "theta", options=theta_opts,
-        subcycling_options=subcycling_opts
-    )
-]
 
+# Only apply transport methods to the prognostic variables
 transport_methods = [
     DGUpwind(eqns, "u"),
     DGUpwind(eqns, "rho"),
@@ -147,18 +141,6 @@ if variant == 'acoustic':
     )
 elif variant == 'gravity_wave':
     # If resolving the gravity waves, use an implicit method, theta=0.5.
-    subcycling_opts = SubcyclingOptions(subcycle_by_courant=0.25)   
-    transported_fields = [
-        TrapeziumRule(domain, "u", subcycling_options=subcycling_opts),
-        SSPRK3(
-            domain, "rho", rk_formulation=RungeKuttaFormulation.predictor,
-            subcycling_options=subcycling_opts
-        ),
-        SSPRK3(
-            domain, "theta", options=theta_opts,
-            subcycling_options=subcycling_opts
-        )
-    ]
     stepper = Timestepper(
         eqns, TrapeziumRule(domain), io, transport_methods, physics_parametrisations=None
     )
@@ -208,6 +190,8 @@ u0.assign(u_b)
 
 # set the background buoyancy
 stepper.set_reference_profiles([('u', u_b), ('rho', rho_b), ('theta', theta_b)])
+
+# PML variables are zero at the start.
 
 # ------------------------------------------------------------------------ #
 # Run

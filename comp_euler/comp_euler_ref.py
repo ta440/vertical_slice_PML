@@ -3,11 +3,7 @@ Test for the compressible Euler equations,
 in the presence
 of a Gaussian mountain.
 
-There are two confiugrations to examine:
-1) A short timescale for acoustic waves.
-2) A longer timescale for orographic gravity waves.
-
-This script applies no damping at the model top.
+Only create a reference solution for the acoustic configuration
 
 '''
 
@@ -15,7 +11,7 @@ This script applies no damping at the model top.
 
 from firedrake import (
     as_vector, VectorFunctionSpace, PeriodicIntervalMesh, ExtrudedMesh,
-    SpatialCoordinate, exp, pi, cos, Function, Mesh, Constant
+    SpatialCoordinate, exp, pi, cos, Function, Mesh, Constant, conditional
 )
 from gusto import (
     Domain, CompressibleParameters, CompressibleSolver, logger,
@@ -26,28 +22,20 @@ from gusto import (
     Timestepper, RK4, XComponent,ForwardEuler,KineticEnergy, VerticalKineticEnergy
 )
 
-variant = 'acoustic'
-# variant = 'gravity_wave'
-
 domain_width = 100.e3    # width of domain in x direction, in m
-domain_height = 20.e3    # height of model top, in m
+domain_height = 35.e3    # height of model top, in m
+z_base = 20.e3           # height of the main domain, in m
 
 # Set dx = dx = 500 m
 ncolumns=200
-nlayers=40
+nlayers=70
 
-# Time parameters. Create 100 outputs
-# For the acoustic wave:
-if variant == 'acoustic':
-    # For the acoustic wave:
-    dt = 0.25
-    tmax = 150.
-    dumpfreq=4
-elif variant == 'gravity_wave':
-    # For the orographic gravity wave:
-    dt=10
-    tmax=10000.0
-    dumpfreq=10
+# Time parameters.
+tmax = 150.
+dt = 0.25
+dumpfreq=4
+#dt = 0.1
+#dumpfreq=10
 
 # Mountain parameters
 a = 10.e3                # scale width of mountain profile, in m
@@ -57,11 +45,8 @@ hm = 1000.               # height of mountain, in m
 initial_wind = 10.0      # initial horizontal wind, in m/s
 cs = 350                 # Speed of sound, m/s
 Tsurf = 300.             # temperature of surface, in K
-exner_surf = 1.0         # maximum value of Exner pressure at surface
-max_iterations = 20      # maximum number of hydrostatic balance iterations
-tolerance = 1e-8         # tolerance for hydrostatic balance iteration
 
-savename = f'euler_no_damp_analytic_{variant}'
+savename = f'euler_acoustic_ref_{domain_height}'
 
 # ------------------------------------------------------------------------ #
 # Our settings for this set up
@@ -85,8 +70,10 @@ x, z = SpatialCoordinate(ext_mesh)
 # Make the mountain a simple Gaussian one
 zs = hm * exp(-((x - xc)/a)**2)
 
+# Hybrid z blending factor. Only make nonzero from z in [0,20] km.
+A_z = conditional(z <= z_base, (z_base - z) / z_base, 0)
 xexpr = as_vector(
-    [x, z + ((domain_height - z) / domain_height) * zs]
+    [x, z + A_z * zs]
 )
 
 # Make new mesh
@@ -138,31 +125,9 @@ transport_methods = [
     DGUpwind(eqns, "theta", ibp=theta_opts.ibp)
 ]
 
-# Choose timestepper depending on simulation time
-if variant == 'acoustic':
-    # For the acoustic waves, run for a short time,
-    # use an explicit timestepper and small dt
-    stepper = Timestepper(
-        eqns, RK4(domain), io, transport_methods, physics_parametrisations=None
-    )
-elif variant == 'gravity_wave':
-    # If resolving the gravity waves, use an implicit method, theta=0.5.
-    subcycling_opts = SubcyclingOptions(subcycle_by_courant=0.25)   
-    transported_fields = [
-        TrapeziumRule(domain, "u", subcycling_options=subcycling_opts),
-        SSPRK3(
-            domain, "rho", rk_formulation=RungeKuttaFormulation.predictor,
-            subcycling_options=subcycling_opts
-        ),
-        SSPRK3(
-            domain, "theta", options=theta_opts,
-            subcycling_options=subcycling_opts
-        )
-    ]
-    stepper = Timestepper(
-        eqns, TrapeziumRule(domain), io, transport_methods, physics_parametrisations=None
-    )
-
+stepper = Timestepper(
+    eqns, RK4(domain), io, transport_methods, physics_parametrisations=None
+)
 
 # ------------------------------------------------------------------------ #
 # Initial conditions
