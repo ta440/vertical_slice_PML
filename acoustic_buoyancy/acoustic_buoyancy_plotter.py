@@ -24,9 +24,8 @@ from tomplot import (
 # Give the time to plot at:
 t_idx = 100
 
-results_dir = 'acoustic_buoyancy_no_damp'
+results_dir = 'acoustic_buoyancy_ref'
 
-plot_PML_vars = False
 
 extra_name = ''
 
@@ -43,17 +42,17 @@ colour_scheme = 'PiYG'
 field_label = r'$w$ (m s$^{-1}$)'
 contour_method = 'contour'  # Need to use this method to show mountains!
 
-if plot_PML_vars:
-    field_names = ['q_u_x', 'q_u_z', 'q_p', 'q_b']
-    field_titles = ['q_u', 'q_w', 'q_p', 'q_b']
-else:
-    field_names = ['u_x', 'u_z', 'p', 'b']
-    field_titles = ['u', 'w', 'p', 'b']
+field_names = ['u_x', 'u_z', 'p', 'b']
+field_titles = [r'$u$', r'$w$', r'$p$', r'$b$']
+field_labels = [r'(m s$^{-1}$)', r'(m s$^{-1}$)', r'(m$^3$ s$^{-2}$)', r'(m$^2$ s$^{-1}$)']
 
-fig, axarray = plt.subplots(2,2, figsize=(10,6), sharey='all', constrained_layout='True')
+xticks = np.array([0,25,50,75,100])
+yticks = np.array([0,25,50])
 
-for i, (ax, field_name, field_title) in \
-        enumerate(zip(axarray.flatten(), field_names, field_titles)):
+fig, axarray = plt.subplots(2,2, figsize=(8,6.5), sharey='all', constrained_layout='True')
+
+for i, (ax, field_name, field_title, field_label) in \
+        enumerate(zip(axarray.flatten(), field_names, field_titles, field_labels)):
     
     data = extract_gusto_field(data_file, field_name, time_idx=t_idx)
 
@@ -83,17 +82,23 @@ for i, (ax, field_name, field_title) in \
         cmap=cmap, line_contours=lines
     )   
 
-    add_colorbar_ax(ax, cf, field_label, location='bottom')
-    tomplot_field_title(ax, f'{field_title} \n', minmax=True, minmax_format='.4f', field_data=field_data)
+    if field_name == 'b':
+        tomplot_field_title(ax, f'{field_title} \n', minmax=True, minmax_format='.2e', field_data=field_data)
+        add_colorbar_ax(ax, cf, field_label, location='bottom', cbar_format='.1e')
+    elif field_name == 'p':
+        tomplot_field_title(ax, f'{field_title} \n', minmax=True, minmax_format='.3f', field_data=field_data)
+        add_colorbar_ax(ax, cf, field_label, location='bottom', cbar_format='.1f')
+    else:
+        tomplot_field_title(ax, f'{field_title} \n', minmax=True, minmax_format='.4f', field_data=field_data)
+        add_colorbar_ax(ax, cf, field_label, location='bottom', cbar_format='.1e')
 
     ax.set_aspect('equal')
+    ax.set_xticks(xticks)
+    ax.set_yticks(yticks)
 
 t_val = np.round(time, 0)
 
-if plot_PML_vars:
-    savename = f'{figure_stem}{results_dir}_PML_vars_t{t_val}.jpg'
-else:
-    savename = f'{figure_stem}{results_dir}_t{t_val}.jpg'
+savename = f'{figure_stem}{results_dir}_t{t_val}.jpg'
 
 plt.savefig(savename, bbox_inches='tight')
 print(f'saved figure to {savename}')

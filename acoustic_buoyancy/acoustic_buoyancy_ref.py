@@ -2,7 +2,9 @@
 A script to solve the linear acoustic buoyancy equations.
 A pressure perturbation is applied to excite a radially
 propagating acoustic wave.
-Here, a sponge layer is used.
+Here, we compute a reference solution, where the domain
+is 50 km high instead of 20 km. This allows us to let the acoustic
+wave travel vertically unimpeded.
 '''
 
 from firedrake import (
@@ -10,24 +12,22 @@ from firedrake import (
     SpatialCoordinate, exp, pi, cos, Function, Mesh, Constant, conditional
 )
 from gusto import (
-    Domain, CompressibleParameters, CompressibleSolver, logger,
+    Domain, CompressibleParameters, logger,
     OutputParameters, IO, SSPRK3, DGUpwind, SemiImplicitQuasiNewton,
     compressible_hydrostatic_balance, SpongeLayerParameters, Exner, ZComponent,
     Perturbation, SUPGOptions, TrapeziumRule, MaxKernel, MinKernel,
     CompressibleEulerEquations, SubcyclingOptions, RungeKuttaFormulation,
-    Timestepper, RK4, XComponent,ForwardEuler, BoussinesqEquations, BoussinesqParameters,
-    BoussinesqSolver, boussinesq_hydrostatic_balance, LinearAcousticBuoyancyEquations,
-    KineticEnergy, VerticalKineticEnergy
+    Timestepper, RK4, XComponent,ForwardEuler, BoussinesqEquations, BoussinesqParameters, 
+    boussinesq_hydrostatic_balance, LinearAcousticBuoyancyEquations,
+    time_derivative, transport
 )
 
-#######################################################
-
 domain_width = 100.e3    # width of domain in x direction, in m
-domain_height = 20.e3    # height of model top, in m
+domain_height = 50.e3    # height of model top, in m
 
 # Set dx = dx = 500 m
 ncolumns=200
-nlayers=40
+nlayers=100
 
 # Time parameters
 dt=0.25
@@ -36,18 +36,14 @@ dumpfreq=4
 
 # Pressure perturbation
 pert = 10              # Amplitude of perturbation
-d = 1.e3                 # Gaussian half-width for the pressure perturbation
-xc = 0.5*domain_width   # x location of the perturbation
-zc = 0.5*domain_height  # z location of the perturbation
+d = 1.e3               # Gaussian half-width for the pressure perturbation
+xc = 50.e3   # x location of the perturbation (50 km)
+zc = 10.e3  # z location of the perturbation (10 km)
 
 # Other parameters
 cs = 350                 # Speed of sound, m/s
-sponge_depth = 2.e3     # 2000m, so the same width as the PML
-mu_dt = 0.25               # strength of sponge layer, no units
 
-########################################################
-
-savename = f'acoustic_buoyancy_sponge_runA_mudt_{mu_dt}'
+savename = 'acoustic_buoyancy_ref_pb'
 
 # ------------------------------------------------------------------------ #
 # Our settings for this set up
@@ -68,12 +64,9 @@ domain = Domain(mesh, dt, "CG", element_order)
 
 # Equation
 parameters = BoussinesqParameters(mesh, cs=cs)
-sponge = SpongeLayerParameters(
-        mesh, H=domain_height, z_level=domain_height-sponge_depth, mubar=mu_dt/dt
-    )
 
 eqns = LinearAcousticBuoyancyEquations(
-    domain=domain, parameters=parameters, sponge_options=sponge
+    domain=domain, parameters=parameters
 )
 
 # I/O
@@ -84,25 +77,22 @@ output = OutputParameters(
         dump_nc=True,
     )
 
-diagnostic_fields = [Perturbation('b'), ZComponent('u'), XComponent('u'), KineticEnergy(), VerticalKineticEnergy()]
+diagnostic_fields = [Perturbation('b'), ZComponent('u'), XComponent('u')]
 
 io = IO(domain, output, diagnostic_fields=diagnostic_fields)
 
 # Transport schemes
-b_opts = SUPGOptions()
-transported_fields = [
-    TrapeziumRule(domain, "u"),
-    SSPRK3(domain, "p"),
-    SSPRK3(domain, "b", options=b_opts)
-]
+suboptions = {}
+suboptions.update({'b': [time_derivative, transport]})
+b_opts = SUPGOptions(suboptions=suboptions)
 
 stepper = Timestepper(
-    eqns, RK4(domain), io
+    eqns, RK4(domain, options=b_opts), io
 )
 
 
 # ------------------------------------------------------------------------ #
-# Initial conditions. A Gaussian perturbation on p.
+# Initial conditions
 # ------------------------------------------------------------------------ #
 
 u0 = stepper.fields("u")
@@ -113,22 +103,29 @@ b0 = stepper.fields("b")
 Vb = b0.function_space()
 Vp = p0.function_space()
 
-# Define a Gaussian perturbation
-
 x, z = SpatialCoordinate(mesh)
-expr = conditional((x > 0.3*domain_width),
-                     conditional(x < 0.7*domain_width,
-                                 conditional(z > 0.3*domain_height,
-                                             conditional(z < 0.7*domain_height,
+
+# Define a Gaussian pertubration.
+# Confine it to a box of x in [30,70], z in [6,14]
+expr = conditional((x > 30.e3),
+                     conditional(x < 70.e3,
+                                 conditional(z > 6.e3,
+                                             conditional(z < 14.e3,
                                                          pert*exp(-((x-xc)**2 + (z-zc)**2)/d**2),
                                                          0), 0), 0), 0)
 
+# Perturb the pressure
 p_b = Function(Vp).interpolate(expr)
-b0.assign(Constant(0.0))
 p0.assign(p_b)
-b_b = Function(Vb).interpolate(b0)
 
-# No initial wind.
+# No buoyancy perturbation
+#b0.assign(Constant(0.0))
+#b_b = Function(Vb).interpolate(b0)
+
+# ORRR perurb p and b??
+b_b = Function(Vb).interpolate(Constant(1.0)*expr)
+b0.assign(b_b)
+
 u0.project(as_vector([Constant(0.0), Constant(0.0)]))
 
 # set the background buoyancy

@@ -8,7 +8,6 @@ from netCDF4 import Dataset
 import matplotlib
 import matplotlib.colors as colors
 import cartopy.crs as ccrs
-import imageio
 import os
 from os.path import abspath, dirname
 from tomplot import (
@@ -19,9 +18,9 @@ from tomplot import (
 from firedrake import errornorm
 ####################################
 # Reference solution:
-ref_sol = 'acoustic_buoyancy_runA_ref'
+ref_sol = 'acoustic_buoyancy_ref'
 
-case_type = 'runA'
+case_type = ''
 
 mudt1 = 0.1
 mudt2 = 0.25
@@ -29,11 +28,11 @@ mudt3 = 0.5
 mudt4 = 0.75
 mudt5 = 1
 
-sponge_sol1 = f'acoustic_buoyancy_sponge_{case_type}_mudt_{mudt1}'
-sponge_sol2 = f'acoustic_buoyancy_sponge_{case_type}_mudt_{mudt2}'
-sponge_sol3 = f'acoustic_buoyancy_sponge_{case_type}_mudt_{mudt3}'
-sponge_sol4 = f'acoustic_buoyancy_sponge_{case_type}_mudt_{mudt4}'
-sponge_sol5 = f'acoustic_buoyancy_sponge_{case_type}_mudt_{mudt5}'
+sponge_sol1 = f'acoustic_buoyancy_sponge_{case_type}mudt_{mudt1}'
+sponge_sol2 = f'acoustic_buoyancy_sponge_{case_type}mudt_{mudt2}'
+sponge_sol3 = f'acoustic_buoyancy_sponge_{case_type}mudt_{mudt3}'
+sponge_sol4 = f'acoustic_buoyancy_sponge_{case_type}mudt_{mudt4}'
+sponge_sol5 = f'acoustic_buoyancy_sponge_{case_type}mudt_{mudt5}'
 
 # Field to compute the error in
 field_name = 'u_z'

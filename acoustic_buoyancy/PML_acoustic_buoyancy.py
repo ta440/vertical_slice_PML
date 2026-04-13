@@ -1,10 +1,8 @@
 '''
-A script to solve the linear acoustic buoyancy equations.
-A pressure perturbation is applied to excite a radially
-propagating acoustic wave.
-Here, we compute a reference solution, where the domain
-is 50 km high instead of 20 km. This allows us to let the acoustic
-wave travel vertically unimpeded.
+A script to solve the comppressible Euler equations with the addition
+of topography. This is part of experiments to determine if I 
+can make a simple system that contains
+orographically-driven gravity waves.
 '''
 
 from firedrake import (
@@ -12,23 +10,26 @@ from firedrake import (
     SpatialCoordinate, exp, pi, cos, Function, Mesh, Constant, conditional
 )
 from gusto import (
-    Domain, CompressibleParameters, CompressibleSolver, logger,
+    Domain, CompressibleParameters, logger, PMLParameters,
     OutputParameters, IO, SSPRK3, DGUpwind, SemiImplicitQuasiNewton,
     compressible_hydrostatic_balance, SpongeLayerParameters, Exner, ZComponent,
     Perturbation, SUPGOptions, TrapeziumRule, MaxKernel, MinKernel,
     CompressibleEulerEquations, SubcyclingOptions, RungeKuttaFormulation,
     Timestepper, RK4, XComponent,ForwardEuler, BoussinesqEquations, BoussinesqParameters,
-    BoussinesqSolver, boussinesq_hydrostatic_balance, LinearAcousticBuoyancyEquations
+    boussinesq_hydrostatic_balance, LinearAcousticBuoyancyEquations,
+    PMLParameters, KineticEnergy, VerticalKineticEnergy, time_derivative, transport,
+    BousInternalEnergy, BousPotentialEnergy, BousPMLEnergy
+    
 )
 
-savename = 'acoustic_buoyancy_runA_ref_test'
+#################################
 
 domain_width = 100.e3    # width of domain in x direction, in m
-domain_height = 50.e3    # height of model top, in m
+domain_height = 20.e3    # height of model top, in m
 
 # Set dx = dx = 500 m
 ncolumns=200
-nlayers=100
+nlayers=40
 
 # Time parameters
 dt=0.25
@@ -38,12 +39,16 @@ dumpfreq=4
 # Pressure perturbation
 pert = 10              # Amplitude of perturbation
 d = 1.e3                 # Gaussian half-width for the pressure perturbation
-xc = 50.e3   # x location of the perturbation (50 km)
-zc = 10.e3  # z location of the perturbation (10 km)
+xc = 0.5*domain_width   # x location of the perturbation
+zc = 0.5*domain_height  # z location of the perturbation
 
 # Other parameters
 cs = 350                 # Speed of sound, m/s
 
+# PML parameters
+gamma0 = 0.45
+
+savename = f'PML_acoustic_buoyancy_gamma0_{gamma0}'
 
 # ------------------------------------------------------------------------ #
 # Our settings for this set up
@@ -52,7 +57,6 @@ cs = 350                 # Speed of sound, m/s
 spinup_steps = 5  # Not necessary but helps balance initial conditions
 alpha = 0.51      # Necessary to absorb grid scale waves
 element_order = 1
-u_eqn_type = 'vector_advection_form'
 
 base_mesh = PeriodicIntervalMesh(ncolumns, domain_width)
 mesh = ExtrudedMesh(
@@ -64,9 +68,10 @@ domain = Domain(mesh, dt, "CG", element_order)
 
 # Equation
 parameters = BoussinesqParameters(mesh, cs=cs)
+PML_pars = PMLParameters(mesh, H=domain_height, gamma0=gamma0)
 
 eqns = LinearAcousticBuoyancyEquations(
-    domain=domain, parameters=parameters
+    domain=domain, parameters=parameters, PML_options=PML_pars
 )
 
 # I/O
@@ -77,22 +82,20 @@ output = OutputParameters(
         dump_nc=True,
     )
 
-diagnostic_fields = [Perturbation('b'), ZComponent('u'), XComponent('u')]
+
+diagnostic_fields = [Perturbation('b'), ZComponent('u'), XComponent('u'), ZComponent('q_u'), XComponent('q_u'), 
+                     KineticEnergy(), VerticalKineticEnergy(), BousInternalEnergy(cs=cs), BousPotentialEnergy(N=parameters.N),
+                     BousPMLEnergy(sigma=eqns.sigma, cs=cs)]
 
 io = IO(domain, output, diagnostic_fields=diagnostic_fields)
 
-# Transport schemes
-b_opts = SUPGOptions()
-transported_fields = [
-    TrapeziumRule(domain, "u"),
-    SSPRK3(domain, "p"),
-    SSPRK3(domain, "b", options=b_opts)
-]
+suboptions = {}
+suboptions.update({'b': [time_derivative, transport]})
+b_opts = SUPGOptions(suboptions=suboptions)
 
 stepper = Timestepper(
-    eqns, RK4(domain), io
+    eqns, RK4(domain, options=b_opts), io
 )
-
 
 # ------------------------------------------------------------------------ #
 # Initial conditions
@@ -101,6 +104,8 @@ stepper = Timestepper(
 u0 = stepper.fields("u")
 p0 = stepper.fields("p")
 b0 = stepper.fields("b")
+q_u0 = stepper.fields("q_u")
+q_p0 = stepper.fields("q_p")
 
 # spaces
 Vb = b0.function_space()
@@ -108,14 +113,21 @@ Vp = p0.function_space()
 
 x, z = SpatialCoordinate(mesh)
 
-# Define a Gaussian pertubration.
-# Confine it to a box of x in [30,70], z in [6,14]
-expr = conditional((x > 30.e3),
-                     conditional(x < 70.e3,
-                                 conditional(z > 6.e3,
-                                             conditional(z < 14.e3,
+# Define a Gaussian pertubration
+expr = conditional((x > 0.3*domain_width),
+                     conditional(x < 0.7*domain_width,
+                                 conditional(z > 0.3*domain_height,
+                                             conditional(z < 0.7*domain_height,
                                                          pert*exp(-((x-xc)**2 + (z-zc)**2)/d**2),
                                                          0), 0), 0), 0)
+
+# Apply the perturbation to the buoyancy
+#b_b = Function(Vb).interpolate(b_expr)
+#b0.interpolate(b_b)
+
+#p_b = Function(Vp)
+#boussinesq_hydrostatic_balance(eqns, b_b, p_b)
+#p0.assign(p_b)
 
 p_b = Function(Vp).interpolate(expr)
 b0.assign(Constant(0.0))
@@ -123,6 +135,10 @@ p0.assign(p_b)
 b_b = Function(Vb).interpolate(b0)
 
 u0.project(as_vector([Constant(0.0), Constant(0.0)]))
+
+# PML variables all set to zero
+q_u0.project(as_vector([Constant(0.0), Constant(0.0)]))
+q_p0.assign(Constant(0.0))
 
 # set the background buoyancy
 stepper.set_reference_profiles([('p', p_b), ('b', b_b)])

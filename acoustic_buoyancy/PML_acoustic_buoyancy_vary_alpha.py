@@ -17,7 +17,8 @@ from gusto import (
     CompressibleEulerEquations, SubcyclingOptions, RungeKuttaFormulation,
     Timestepper, RK4, XComponent,ForwardEuler, BoussinesqEquations, BoussinesqParameters,
     boussinesq_hydrostatic_balance, LinearAcousticBuoyancyEquations,
-    PMLParameters, KineticEnergy, VerticalKineticEnergy, time_derivative, transport
+    PMLParameters, KineticEnergy, VerticalKineticEnergy, time_derivative, transport,
+    BousInternalEnergy, BousPotentialEnergy, BousPMLEnergy
 )
 
 #######################################################################
@@ -44,7 +45,7 @@ zc = 0.5*domain_height  # z location of the perturbation
 cs = 350                 # Speed of sound, m/s
 
 # PML parameters
-alpha_fact = 0.075
+alpha_fact = 0
 gamma0 = 0.25
 
 savename = f'PML_acoustic_buoyancy_alpha_{alpha_fact}_gamma0_{gamma0}'
@@ -83,7 +84,8 @@ output = OutputParameters(
 
 
 diagnostic_fields = [Perturbation('b'), ZComponent('u'), XComponent('u'), ZComponent('q_u'), XComponent('q_u'), 
-                     KineticEnergy(), VerticalKineticEnergy()]
+                     KineticEnergy(), VerticalKineticEnergy(), 
+                     BousInternalEnergy(cs=cs), BousPotentialEnergy(N=parameters.N), BousPMLEnergy(sigma=eqns.sigma, cs=cs)]
 
 io = IO(domain, output, diagnostic_fields=diagnostic_fields)
 

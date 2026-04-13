@@ -10,17 +10,16 @@ from firedrake import (
     SpatialCoordinate, exp, pi, cos, Function, Mesh, Constant, conditional
 )
 from gusto import (
-    Domain, CompressibleParameters, CompressibleSolver, logger,
+    Domain, CompressibleParameters, logger,
     OutputParameters, IO, SSPRK3, DGUpwind, SemiImplicitQuasiNewton,
     compressible_hydrostatic_balance, SpongeLayerParameters, Exner, ZComponent,
     Perturbation, SUPGOptions, TrapeziumRule, MaxKernel, MinKernel,
     CompressibleEulerEquations, SubcyclingOptions, RungeKuttaFormulation,
     Timestepper, RK4, XComponent,ForwardEuler, BoussinesqEquations, BoussinesqParameters,
-    BoussinesqSolver, boussinesq_hydrostatic_balance, LinearAcousticBuoyancyEquations,
-    KineticEnergy, VerticalKineticEnergy
+    boussinesq_hydrostatic_balance, LinearAcousticBuoyancyEquations,
+    KineticEnergy, VerticalKineticEnergy, time_derivative, transport,
+    BousInternalEnergy, BousPotentialEnergy
 )
-
-savename = 'acoustic_buoyancy_runA'
 
 domain_width = 100.e3    # width of domain in x direction, in m
 domain_height = 20.e3    # height of model top, in m
@@ -43,6 +42,7 @@ zc = 0.5*domain_height  # z location of the perturbation
 # Other parameters
 cs = 350                 # Speed of sound, m/s
 
+savename = 'acoustic_buoyancy_no_damp'
 
 # ------------------------------------------------------------------------ #
 # Our settings for this set up
@@ -76,22 +76,14 @@ output = OutputParameters(
         dump_nc=True,
     )
 
-diagnostic_fields = [Perturbation('b'), ZComponent('u'), XComponent('u'), KineticEnergy(), VerticalKineticEnergy()]
+diagnostic_fields = [Perturbation('b'), ZComponent('u'), XComponent('u'), KineticEnergy(), VerticalKineticEnergy(),
+                     BousInternalEnergy(cs=cs), BousPotentialEnergy(N=parameters.N)]
 
 io = IO(domain, output, diagnostic_fields=diagnostic_fields)
-
-# Transport schemes
-b_opts = SUPGOptions()
-transported_fields = [
-    TrapeziumRule(domain, "u"),
-    SSPRK3(domain, "p"),
-    SSPRK3(domain, "b", options=b_opts)
-]
 
 stepper = Timestepper(
     eqns, RK4(domain), io
 )
-
 
 # ------------------------------------------------------------------------ #
 # Initial conditions. A Gaussian perturbation on p.

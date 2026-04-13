@@ -10,7 +10,6 @@ from netCDF4 import Dataset
 import matplotlib
 import matplotlib.colors as colors
 import cartopy.crs as ccrs
-import imageio
 import os
 from os.path import abspath, dirname
 from tomplot import (
